@@ -102,25 +102,25 @@ for match_set in matches:
 
 print(f"✅ Found {len(good_matches[0])} defect matches.")
 
-def visualize_feature_matching(img1, kp1, img2, kp2, matches, title="Feature Matching"):
-    """
-    Draws and displays SIFT feature matches between two images.
-    """
-    match_img = cv2.drawMatches(img1, kp1, img2, kp2, matches, None, flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+# def visualize_feature_matching(img1, kp1, img2, kp2, matches, title="Feature Matching"):
+#     """
+#     Draws and displays SIFT feature matches between two images.
+#     """
+#     match_img = cv2.drawMatches(img1, kp1, img2, kp2, matches, None, flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
     
-    plt.figure(figsize=(12, 6))
-    plt.imshow(cv2.cvtColor(match_img, cv2.COLOR_BGR2RGB))
-    plt.title(title)
-    plt.axis("off")
-    plt.show()
+#     plt.figure(figsize=(12, 6))
+#     plt.imshow(cv2.cvtColor(match_img, cv2.COLOR_BGR2RGB))
+#     plt.title(title)
+#     plt.axis("off")
+#     plt.show()
 
-# Show feature matching between the first two images
-visualize_feature_matching(
-    images[0], filtered_keypoints[0], 
-    images[1], filtered_keypoints[1], 
-    good_matches[0], 
-    title="SIFT Feature Matching (Defect Region)"
-)
+# # Show feature matching between the first two images
+# visualize_feature_matching(
+#     images[0], filtered_keypoints[0], 
+#     images[1], filtered_keypoints[1], 
+#     good_matches[0], 
+#     title="SIFT Feature Matching (Defect Region)"
+# )
 
 # ==== STEP 6: Estimate Real-World Position ====
 def get_defect_keypoints(matches, keypoints1, keypoints2):
@@ -150,11 +150,51 @@ defect_lon = (drone_positions[0][1] + drone_positions[1][1]) / 2
 
 print(f"✅ Estimated Defect Location: Latitude {defect_lat}, Longitude {defect_lon}, Depth {defect_depth:.2f}m")
 
+# Earth's radius in meters
+EARTH_RADIUS = 6371000
+
+def refine_defect_location(drone_lat, drone_lon, defect_depth, gimbal_pitch, heading):
+    """
+    Refines the defect's GPS location using depth, camera angles, and drone heading.
+    """
+
+    # Convert angles to radians
+    gimbal_pitch_rad = np.radians(gimbal_pitch)
+    heading_rad = np.radians(heading)
+
+    # Calculate ground distance using gimbal pitch angle
+    ground_distance = defect_depth * np.tan(gimbal_pitch_rad)
+
+    # Convert ground distance to (X, Y) offsets using drone heading
+    delta_x = ground_distance * np.sin(heading_rad)  # East-West offset (meters)
+    delta_y = ground_distance * np.cos(heading_rad)  # North-South offset (meters)
+
+    # Convert (X, Y) offset to latitude/longitude
+    delta_lat = (delta_y / EARTH_RADIUS) * (180 / np.pi)
+    delta_lon = (delta_x / (EARTH_RADIUS * np.cos(np.radians(drone_lat)))) * (180 / np.pi)
+
+    # Compute refined latitude and longitude
+    refined_lat = drone_lat + delta_lat
+    refined_lon = drone_lon + delta_lon
+
+    return refined_lat, refined_lon
+
+# === Step 1: Get Drone Metadata for the First Image ===
+drone_lat, drone_lon, _ = drone_positions[0]  # Use first drone position
+gimbal_pitch = df["gimbal_pitch"][0]  # Extract gimbal pitch angle from metadata
+heading = df["heading"][0]  # Extract drone heading from metadata
+
+# === Step 2: Compute Refined Defect Location ===
+refined_lat, refined_lon = refine_defect_location(drone_lat, drone_lon, defect_depth, gimbal_pitch, heading)
+
+print(f"✅ Refined Defect Location: Latitude {refined_lat}, Longitude {refined_lon}, Depth {defect_depth:.2f}m")
+
+
 # ==== STEP 7: Visualize on a Map ====
-defect_map = folium.Map(location=[defect_lat, defect_lon], zoom_start=18)
+defect_map = folium.Map(location=[refined_lat, refined_lon], zoom_start=18)
 
 folium.Marker(
-    location=[defect_lat, defect_lon],
+    location=[refined_lat, refined_lon],
     popup=f"Estimated Defect\nLat: {defect_lat}, Lon: {defect_lon}\nDepth: {defect_depth:.2f}m",
     icon=folium.Icon(color="red", icon="info-sign"),
 ).add_to(defect_map)
